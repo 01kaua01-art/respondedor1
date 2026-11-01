@@ -289,5 +289,106 @@ def main_cli() -> None:
     print("=" * 70)
 
 
+# ==============================================================================
+# Ponto de entrada para plataformas Serverless / Cloud (Vercel, AWS Lambda, WSGI)
+# Exporta 'app', 'application' e 'handler' para atender ao deploy na Vercel
+# ==============================================================================
+
+from http.server import BaseHTTPRequestHandler
+
+
+def app(environ: Dict[str, Any], start_response: Callable[..., Any]) -> List[bytes]:
+    """
+    Aplicação WSGI padrão para ambientes em nuvem (Vercel, Gunicorn, uWSGI).
+    Responde a requisições GET (status) e POST (execução do loop de agentes).
+    """
+    metodo = environ.get("REQUEST_METHOD", "GET")
+
+    if metodo == "GET":
+        status = "200 OK"
+        headers = [("Content-Type", "application/json; charset=utf-8")]
+        start_response(status, headers)
+        info = {
+            "status": "online",
+            "servico": "Orquestrador de Agentes de IA em Loop",
+            "versao": "1.0.0",
+            "descricao": "Sistema autônomo com geração, avaliação, refinamento e poda.",
+            "rotas": {
+                "GET /": "Status e verificação de saúde da API",
+                "POST /": "Executa o loop de agentes via JSON",
+            },
+        }
+        return [json.dumps(info, ensure_ascii=False, indent=2).encode("utf-8")]
+
+    elif metodo == "POST":
+        try:
+            try:
+                tamanho = int(environ.get("CONTENT_LENGTH", 0))
+            except (ValueError, TypeError):
+                tamanho = 0
+
+            corpo_raw = environ["wsgi.input"].read(tamanho) if tamanho > 0 else b"{}"
+            corpo_dict = json.loads(corpo_raw.decode("utf-8"))
+
+            config_loop = ConfiguracaoLoop.model_validate(corpo_dict)
+            resultado = executar_loop(config_loop)
+
+            status = "200 OK"
+            headers = [("Content-Type", "application/json; charset=utf-8")]
+            start_response(status, headers)
+            return [json.dumps(resultado.model_dump(), ensure_ascii=False, indent=2).encode("utf-8")]
+
+        except Exception as e:
+            status = "400 Bad Request"
+            headers = [("Content-Type", "application/json; charset=utf-8")]
+            start_response(status, headers)
+            return [json.dumps({"erro": f"Erro na requisição: {str(e)}"}, ensure_ascii=False).encode("utf-8")]
+
+    status = "405 Method Not Allowed"
+    headers = [("Content-Type", "application/json; charset=utf-8")]
+    start_response(status, headers)
+    return [b'{"erro": "Metodo HTTP nao permitido. Utilize GET ou POST."}']
+
+
+# Aliases padrão reconhecidos por servidores WSGI e Vercel
+application = app
+
+
+class handler(BaseHTTPRequestHandler):
+    """
+    Handler baseado em BaseHTTPRequestHandler reconhecido pelo runtime da Vercel.
+    """
+
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        info = {
+            "status": "online",
+            "servico": "Orquestrador de Agentes de IA em Loop",
+            "versao": "1.0.0",
+            "mensagem": "Serviço ativo na Vercel.",
+        }
+        self.wfile.write(json.dumps(info, ensure_ascii=False).encode("utf-8"))
+
+    def do_POST(self) -> None:
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            post_data = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            dados = json.loads(post_data.decode("utf-8"))
+            config_loop = ConfiguracaoLoop.model_validate(dados)
+            resultado = executar_loop(config_loop)
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(resultado.model_dump(), ensure_ascii=False).encode("utf-8"))
+        except Exception as e:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"erro": f"Erro na requisição: {str(e)}"}, ensure_ascii=False).encode("utf-8"))
+
+
 if __name__ == "__main__":
     main_cli()
